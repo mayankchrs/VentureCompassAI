@@ -1,0 +1,321 @@
+Below is a first‑cut **Product Requirements Document (PRD)** for the fused concept we agreed on:
+
+---
+
+# VentureCompass AI
+
+**End‑to‑End Startup & IP Due‑Diligence Copilot**
+
+**Doc status:** Draft v0.1
+**Owner:** You (PM/Tech lead)
+**Contributors:** Eng (backend, frontend), ML/Agents, DevOps
+**Target release:** 10 working days (MVP)
+**Primary user:** Early‑stage / Series‑A VC analysts (expandable to CVC/M\&A)
+
+---
+
+## 1) Problem & Goals
+
+**Problem.** Analysts lose hours stitching together company intel (founders, funding, traction) with **defensible IP signals** (patents/claims/assignees). Sources are scattered, stale, or paywalled. Decisions need **fresh, traceable** evidence and **clear red‑flags**.
+
+**Product Goal.** Produce a **trustworthy, cited dossier** in minutes by combining live web research and recent patent activity—summarized, risk‑scored, and shareable.
+
+**Success Metrics (MVP)**
+
+* T1: Generate a first dossier (company + patents + risks) **≤ 90 seconds** for 90% of targets.
+* T2: **≥ 80% precision** on “Relevant / Not Relevant” for returned news and patent items (manual audit of 50 runs).
+* T3: **≥ 90% of items include citations** linkable from the UI.
+* T4: Analyst time saved: baseline 45–60 min ➜ **< 10 min** to a usable brief (pilot survey).
+* T5: **API cost / run ≤ \$0.30** at default settings (Tavily + LLM tokens).
+
+**Non‑Goals (MVP)**
+
+* Full global patent coverage (EPO/CNIPA detailed claims).
+* Bulk list uploads & CRM webhooks.
+* Slide‑deck/PDF export (planned v2).
+* Automated valuation or investment recommendations.
+
+---
+
+## 2) Personas & Key Jobs-to-be-Done
+
+**Primary Persona: VC Analyst (“Asha”)**
+
+* *JTBD‑1*: “In 15 minutes, brief my partner on ‘Should we meet this startup?’ with solid cites.”
+* *JTBD‑2*: “Detect IP overlap/white‑space and potential litigation risk early.”
+* *JTBD‑3*: “Surface red flags before first call (lawsuits, regulatory, data breaches).”
+
+**Secondary Persona: CVC / Corp Strategy (“Ravi”)**
+
+* Track competitors’ filings & partnerships for roadmap impact.
+
+---
+
+## 3) Scope (MVP)
+
+### 3.1 User Stories (Must‑Haves)
+
+1. **Search a company by name** (optionally domain) and get a live dossier with:
+   a) **Overview**: founders, recent funding/partnerships, traction signals.
+   b) **Patent snapshot** (last 5 years): titles, assignees, dates, CPC/keywords, claim extract.
+   c) **Red‑flag radar**: litigation, regulatory action, security breach, founder controversy.
+   d) **Citations** for each item (open in new tab).
+2. **See why** (RAG‑style evidence): click any insight to view the source excerpt.
+3. **Export JSON** of the run for sharing in internal tools.
+4. **Re‑run** a company to refresh results (cached for 24h to save credits).
+
+### 3.2 Nice‑to‑Haves (Stretch)
+
+* Slack notification with top 5 bullets + links.
+* Competitor compare (enter 1–2 rivals).
+* Timeline view of filings & press.
+* PDF deck export (6 slides).
+
+---
+
+## 4) Functional Requirements
+
+**FR‑1 Input**
+
+* Text box for **Company Name** (required).
+* Optional **Website URL** to disambiguate (e.g., common names).
+
+**FR‑2 Agents (LangGraph)**
+
+* **A1. News Retriever** — Tavily `/search` with `topic=news`, `time_range=30d`, default `search_depth=basic`, escalation to `advanced` if \<N hits.
+* **A2. Patent Hunter** — Tavily search patterns:
+
+  * `"<company>" patent application OR grant site:uspto.gov`,
+  * `"<company>" WIPO PCT abstract site:wipo.int`
+  * Parse top 10 results (last 5y). Use `/extract` for clean text when available.
+* **A3. Insight Synthesizer** — LLM consolidates: overview, funding events, partnerships, traction bullets; dedupe by URL hash.
+* **A4. Red‑Flag Screener** — LLM classifier tags items into: *Litigation*, *Regulatory*, *Security/Breach*, *Founder/Leadership controversy*; severity = {Low/Med/High}.
+* **A5. Orchestrator** — coordinates retries, backoff, credit caps, caching.
+
+**FR‑3 Output**
+
+* **Dossier UI** with tabs: *Overview* | *Patents* | *Risks* | *Sources*.
+* Each card shows **title, date, one‑line summary, citation icon**.
+* **Download JSON** of the entire run.
+
+**FR‑4 Caching & Cost Control**
+
+* 24h cache key = (company, normalized date window).
+* Credit cap per run; graceful degradation (show what we have + “Load more” option).
+
+**FR‑5 Observability**
+
+* Store **run log** (agents states, durations, credit use).
+* Error trace per step (for demo transparency).
+
+---
+
+## 5) Non‑Functional Requirements (NFRs)
+
+* **Latency**: P50 ≤ 60s, P95 ≤ 120s for single‑company run.
+* **Availability**: ≥ 99% during demo period.
+* **Security**: Secrets in AWS Secrets Manager; least‑privilege IAM.
+* **Privacy**: No storage of user‑provided notes beyond the run; only public web content.
+* **Compliance**: Respect robots/ToS via Tavily; no scraping behind paywalls.
+* **Cost**: Default run ≤ \$0.30 with configurable knobs.
+
+---
+
+## 6) System & Architecture (MVP)
+
+**Frontend:** React (minimal), hosted on AWS (S3 + CloudFront or within EB).
+**Backend API:** Python FastAPI service on **AWS Elastic Beanstalk** (or ECS Fargate).
+**Agents Runtime:** LangGraph nodes inside backend worker; async execution.
+**Data:** MongoDB Atlas (shared free/low‑tier), S3 for artifacts (optional).
+**Secrets:** AWS Secrets Manager (Tavily key, LLM key).
+**Scheduling:** EventBridge (for optional re‑checks).
+**Analytics/Logs:** CloudWatch + Mongo `runs` collection.
+
+**High‑level flow**
+
+1. User submits “Acme Bio”.
+2. Orchestrator launches A1 & A2 in parallel.
+3. A3 synthesizes overview + A4 flags risks.
+4. Persist to Mongo; stream updates to UI (polling or SSE).
+5. Return dossier; user can click into sources or download JSON.
+
+---
+
+## 7) LangGraph Design
+
+**State object (simplified)**
+
+```ts
+type RunState = {
+  run_id: string
+  company: { name: string; domain?: string }
+  queries: { news: string[]; patents: string[] }
+  results: {
+    news: SourceDoc[]
+    patents: PatentDoc[]
+  }
+  insights?: {
+    overview: string[]
+    funding_events: Event[]
+    partnerships: Event[]
+  }
+  risks?: RiskItem[]
+  citations: Citation[]
+  cost: { tavily_credits: number; llm_tokens: number }
+  status: "pending"|"running"|"partial"|"complete"|"error"
+  errors?: AgentError[]
+}
+```
+
+**Nodes & edges**
+
+* `NewsRetriever` → `InsightSynthesizer`
+* `PatentHunter` → `InsightSynthesizer`
+* `InsightSynthesizer` → `RedFlagScreener` → `Done`
+* Error edges: any node → `Retry` (max 2) → `PartialDone`.
+
+---
+
+## 8) Data Model (Mongo Collections)
+
+**`companies`**
+
+```json
+{ "_id": "...", "name": "Acme Bio", "domain": "acmebio.com", "created_at": "...", "aliases": ["Acme Biotech"] }
+```
+
+**`runs`**
+
+```json
+{
+  "_id": "...", "company_id": "...", "started_at": "...", "ended_at": "...",
+  "status": "complete", "cost": {"tavily_credits": 14, "llm_tokens": 70_000}
+}
+```
+
+**`sources`** (normalized Tavily docs)
+
+```json
+{
+  "_id": "...", "run_id": "...", "type": "news|patent",
+  "title": "USPTO grants ...", "url": "...", "published_at": "2025-06-20",
+  "snippet": "...", "extracted_text_ref": "s3://...", "hash": "sha256..."
+}
+```
+
+**`patents`**
+
+```json
+{
+  "_id": "...", "run_id": "...", "assignee": "Acme Bio Inc.",
+  "title": "Method for ...", "abstract": "...", "cpc": ["G06N"], "filing_date": "2024-11-05",
+  "grant_date": "2025-06-20", "similarity": [{"to": "rival_X", "score": 0.71}]
+}
+```
+
+**`insights` & `risks`**
+
+```json
+{ "_id":"...", "run_id":"...", "kind":"overview|funding|partnership", "text":"...", "citations":["source_id_1"] }
+```
+
+```json
+{ "_id":"...", "run_id":"...", "category":"litigation|regulatory|security|leadership", "severity":"high", "summary":"...", "citations":["source_id_9"] }
+```
+
+---
+
+## 9) API Contract (MVP)
+
+**POST `/api/run`**
+Request:
+
+```json
+{ "company": "Acme Bio", "domain": "acmebio.com" }
+```
+
+Response:
+
+```json
+{ "run_id": "r_123", "status": "running" }
+```
+
+**GET `/api/run/:id`**
+Returns current state (poll every 2s):
+
+```json
+{ "status":"complete", "company": {...}, "insights": [...], "patents":[...], "risks":[...], "sources":[...], "cost": {...} }
+```
+
+**GET `/api/run/:id/export.json`**
+Raw data snapshot for the run.
+
+---
+
+## 10) UX Requirements
+
+* **Home screen**: single search bar (+ optional domain).
+* **Progress panel**: “Fetching news…”, “Scanning patents…”, “Scoring risks…”.
+* **Dossier**:
+
+  * **Overview**: 5–7 bullets (funding, partnerships, product).
+  * **Patents**: table (title, assignee, filing/grant date, CPC/keywords, “View claim extract”).
+  * **Risks**: list with severity chips; each item opens **evidence drawer** (source excerpt + link).
+  * **Sources**: flat list with filters and “open in new tab”.
+
+Accessibility: keyboard nav, readable contrasts, link out states.
+
+---
+
+## 11) Tavily Integration Details
+
+* Default `search_depth="basic"`; auto‑bump to `advanced` if `< 5` relevant hits.
+* Use `topic="news"` for recency; `time_range="week|month"` knobs.
+* **Patents**: prebuilt query templates + company alias list (name variations, parent company).
+* **Extraction**: call `/extract` **only** for top‑N items where snippet is insufficient (save credits).
+* **Site filters** (heuristics):
+
+  * Funding/press: `techcrunch.com`, `prnewswire.com`, reputable tech/business outlets.
+  * Patents: `uspto.gov`, `wipo.int` (abstracts/records).
+  * Risks: add `lawsuit`, `regulatory`, `breach` keywords; exclude aggregator spam domains.
+
+---
+
+## 12) Cost/Performance Guardrails
+
+* **Max credits/run:** 20 (stop gracefully with “partial results”).
+* **Max LLM tokens/run:** 100k; chunk summarization; caching layer for repeated URLs.
+* **Batching:** de‑duplicate URLs before `/extract`.
+* **Timeouts:** 30s per Tavily call; 2 retries with exponential backoff.
+* **Caching:** 24h by normalized query; invalidate on user-forced refresh.
+
+---
+
+## 13) Risks & Mitigations
+
+| Risk                                    | Mitigation                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| Patent queries miss assignee variations | Generate alias list from news (“Acme Bio Inc.” / “Acme Biotech LLC”).               |
+| False positives in red flags            | Require 2+ independent sources for **High** severity; let user down‑rank.           |
+| Cost spikes                             | Credit ceiling; degrade to snippet‑only; “Load more” button triggers extra queries. |
+| Long-tail company names collide         | Domain disambiguation + simple knowledge card logic (HQ, logo) to confirm target.   |
+| Latency P95 > 120s                      | Parallelize agents; optimistic UI with streaming updates; cache hits.               |
+
+---
+
+## 14) Testing & Acceptance Criteria
+
+**Unit/Integration**
+
+* Mock Tavily responses; verify parser robustness.
+* Classifier tests: 50 labeled items → **≥ 0.8 precision** for risk categories.
+
+**E2E Acceptance (pass all)**
+
+1. Input “KnownCo” ➜ Dossier with ≥ 5 news items, ≥ 3 patents, ≥ 1 risk item, all with citations.
+2. P95 end‑to‑end time ≤ 120s on first run; ≤ 20s on cached rerun.
+3. JSON export matches collections schema.
+4. Credits used ≤ ceiling; graceful message if ceiling hit.
+5. Secrets not logged; error paths visible to user with retry.
+
+---

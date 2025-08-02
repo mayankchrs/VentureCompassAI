@@ -1,0 +1,504 @@
+Below is a **Technical Design Document (TDD)** for **VentureCompass AI**. It complements the PRD with precise implementation details, interfaces, and operational plans.
+
+---
+
+# VentureCompass AI — Technical Design Document (TDD)
+
+**Version:** 0.1 (MVP)
+**Owner:** Engineering (Backend/Agents/DevOps)
+**Target stack:** Python (FastAPI, LangGraph), React, MongoDB Atlas, AWS (Elastic Beanstalk, S3, CloudFront, Secrets Manager, CloudWatch), Tavily Search API
+
+---
+
+## 1. System Overview
+
+VentureCompass generates an investor‑grade, cited dossier for a given company by orchestrating parallel **News** and **Patent** discovery using **Tavily**. Results are classified, summarized, risk‑scored, and presented in a React UI. A small set of **LangGraph** agents handles retrieval, synthesis, and risk tagging; MongoDB persists run state and objects.
+
+**Core services**
+
+* **Web API** (FastAPI): run orchestration, state polling, JSON export
+* **Agents Runtime** (LangGraph inside Web API container): NewsRetriever, PatentHunter, InsightSynthesizer, RedFlagScreener
+* **Data**: MongoDB Atlas for operational data; optional S3 for long text blobs
+* **UI**: React single-page app, minimal dossier viewer
+
+---
+
+## 2. Architecture
+
+### 2.1 High-Level Diagram (text)
+
+```
+[Browser/React] 
+   ↕ HTTPS
+[API Gateway/ALB] 
+   ↕ 
+[FastAPI + LangGraph on Elastic Beanstalk (EC2)] 
+   ├── Tavily Client (HTTP)
+   ├── LLM Client (HTTP)
+   ├── MongoDB Atlas (TLS)
+   └── AWS S3 (optional, TLS) 
+```
+
+### 2.2 Data Flow (sequence)
+
+1. **POST /api/run** — API validates input, creates `run` record, kicks off LangGraph execution (async task).
+2. **NewsRetriever** + **PatentHunter** run **in parallel**, push normalized `SourceDoc[]` and `PatentDoc[]` to state, persist to Mongo.
+3. **InsightSynthesizer** performs summarization and deduplication (RAG‑style referencing of sources).
+4. **RedFlagScreener** classifies risk items and assigns severities with multi‑source confirmation.
+5. **GET /api/run/\:id** — UI polls for state until `status=complete`.
+6. **GET /api/run/\:id/export.json** — export snapshot.
+
+---
+
+## 3. Detailed Components
+
+### 3.1 Backend API (FastAPI)
+
+**Packages**
+
+* `fastapi`, `uvicorn[standard]`, `httpx`, `pydantic`, `pymongo[srv]`, `motor` (async), `langgraph`, `tenacity` (retries), `python-json-logger`
+
+**Environment Variables**
+
+```
+ENV=dev|prod
+MONGODB_URI="mongodb+srv://..."
+DB_NAME="venture_compass"
+TAVILY_API_KEY="tvly-..."
+LLM_PROVIDER=openai|anthropic|azure_openai
+LLM_MODEL="gpt-4o-mini"      # example
+LLM_API_KEY="..."
+S3_BUCKET="vc-artifacts"     # optional
+COST_CAP_TAVILY_CREDITS=20
+RUN_CACHE_TTL_HOURS=24
+```
+
+**Routers**
+
+* `POST /api/run` — create run, enqueue execution (thread or background task)
+* `GET  /api/run/{run_id}` — retrieve current run state
+* `GET  /api/run/{run_id}/export.json` — full JSON snapshot
+
+**Pydantic Schemas (selected)**
+
+```python
+class RunCreate(BaseModel):
+    company: str
+    domain: str | None = None
+
+class RunStateDTO(BaseModel):
+    run_id: str
+    status: Literal["pending","running","partial","complete","error"]
+    company: dict
+    insights: list[dict] | None
+    patents: list[dict] | None
+    risks: list[dict] | None
+    sources: list[dict] | None
+    cost: dict
+    errors: list[dict] | None
+```
+
+### 3.2 Agents (LangGraph)
+
+**State Object (Python type hint)**
+
+```python
+@dataclass
+class RunState:
+    run_id: str
+    company: dict  # {name, domain?, aliases?}
+    queries: dict  # {news: [..], patents: [..]}
+    results: dict  # {"news": list[SourceDoc], "patents": list[PatentDoc]}
+    insights: dict | None = None
+    risks: list[RiskItem] | None = None
+    citations: list[str] = field(default_factory=list)
+    cost: dict = field(default_factory=lambda: {"tavily_credits":0, "llm_tokens":0})
+    status: str = "pending"
+    errors: list[dict] = field(default_factory=list)
+```
+
+**Node Responsibilities**
+
+* **NewsRetriever**
+
+  * Build queries: `[company, company + funding, company + partnership, company + product launch]`
+  * Tavily `/search` with `topic=news`, `time_range=30d`, `search_depth=basic` (escalate to `advanced` if low recall)
+  * Normalize / de‑duplicate; map to `SourceDoc`
+* **PatentHunter**
+
+  * Build queries: `"<company|alias>" patent application|grant site:uspto.gov`, `site:wipo.int PCT abstract`
+  * Tavily `/search` then `/extract` for top‑N (claim/abstract)
+  * Normalize to `PatentDoc` (title, assignee, dates, CPC/keywords if present)
+* **InsightSynthesizer**
+
+  * LLM prompt builds: Overview bullets, Funding/Partnership events, simple CPC/keyword highlights
+  * Uses inline citations (source ids)
+* **RedFlagScreener**
+
+  * Classifies items into `litigation | regulatory | security | leadership`
+  * Assign severity + justification and require **≥2 sources** for High severity
+
+**LangGraph Graph Definition (pseudo‑code)**
+
+```python
+from langgraph.graph import StateGraph, END
+
+graph = StateGraph(RunState)
+
+@graph.node
+async def news_retriever(state): ...
+@graph.node
+async def patent_hunter(state): ...
+@graph.node
+async def insight_synthesizer(state): ...
+@graph.node
+async def redflag_screener(state): ...
+
+# parallel fork
+graph.add_edge("news_retriever", "insight_synthesizer")
+graph.add_edge("patent_hunter", "insight_synthesizer")
+
+graph.add_edge("insight_synthesizer", "redflag_screener")
+graph.add_edge("redflag_screener", END)
+
+app = graph.compile()
+```
+
+**Retries & Backoff**
+
+* Each node decorated with `tenacity`:
+
+  * `stop_after_attempt(2)`, `wait_exponential(min=1, max=8)`
+  * On second failure → write `errors[]`, mark `status="partial"` and continue
+
+### 3.3 Tavily Integration
+
+**Client Wrapper**
+
+```python
+class TavilyClient:
+    def __init__(self, api_key: str):
+        self.session = httpx.AsyncClient(base_url="https://api.tavily.com", headers={
+            "Authorization": f"Bearer {api_key}"
+        })
+
+    async def search(self, query: str, topic="news", depth="basic",
+                     time_range="month", max_results=10, include_answer=False,
+                     include_domains=None, exclude_domains=None):
+        payload = {
+            "query": query, "topic": topic, "search_depth": depth,
+            "time_range": time_range, "max_results": max_results,
+            "include_answer": include_answer,
+        }
+        if include_domains: payload["include_domains"] = include_domains
+        if exclude_domains: payload["exclude_domains"] = exclude_domains
+        return await self.session.post("/search", json=payload, timeout=30.0)
+
+    async def extract(self, urls: list[str], depth="basic"):
+        return await self.session.post("/extract", json={
+            "urls": urls, "extraction_depth": depth
+        }, timeout=60.0)
+```
+
+**Credit Guardrails**
+
+* Start `depth="basic"`; if `<5` relevant results ⇒ one `advanced` pass
+* Global per‑run cap from `COST_CAP_TAVILY_CREDITS`
+* `/extract` only for top‑N (e.g., 5) URLs where snippet insufficient
+
+### 3.4 LLM Integration
+
+Provider‑agnostic wrapper (OpenAI/Anthropic/Azure).
+**Prompts (sketches)**
+
+* **InsightSynthesizer**
+
+  * System: “You generate concise investor briefs with explicit citations using provided JSON sources. Do not hallucinate.”
+  * User: `{"company": "...", "news_items":[...], "patent_items":[...]}`
+  * Output JSON: `{overview:[], funding_events:[], partnerships:[], highlights:[], citations:[]}`
+
+* **RedFlagScreener**
+
+  * System: “Classify potential risk items for litigation, regulatory, security/breach, leadership controversy. Cite at least one source per item; for High severity, require two sources.”
+  * Output JSON: `[{"category":"regulatory","severity":"high","summary":"...", "citations":["src1","src7"]}, ...]`
+
+**Token Controls**
+
+* Chunking long texts to ≤8k tokens per call
+* Strict JSON schema via response‑format hints or function‑tool schema
+
+---
+
+## 4. Data Model (MongoDB)
+
+### 4.1 Collections
+
+* `companies` — normalized entities (name, domain, aliases)
+* `runs` — run metadata, timing, costs
+* `sources` — flattened Tavily results
+* `patents` — normalized patent records
+* `insights` — structured summaries
+* `risks` — risk items with citations
+
+**Indexes**
+
+* `companies.name` (text), `companies.aliases`
+* `sources.run_id`
+* `patents.run_id`, `patents.assignee`, `patents.filing_date`
+* `runs.company_id`, `runs.started_at`
+
+**Schemas** (JSON examples were included in the PRD; we will reuse them as canonical)
+
+---
+
+## 5. API Contract
+
+### 5.1 Create Run
+
+**POST** `/api/run`
+Request:
+
+```json
+{ "company": "Acme Bio", "domain": "acmebio.com" }
+```
+
+Response:
+
+```json
+{ "run_id": "r_123", "status": "running" }
+```
+
+### 5.2 Poll Run
+
+**GET** `/api/run/{run_id}` → `RunStateDTO`
+
+### 5.3 Export
+
+**GET** `/api/run/{run_id}/export.json` → full run snapshot
+
+**Error Model**
+
+```json
+{ "error": { "code": "VALIDATION", "message": "Company required" } }
+```
+
+Common codes: `VALIDATION`, `NOT_FOUND`, `COST_CAP_EXCEEDED`, `UPSTREAM_TIMEOUT`, `PARTIAL_RESULTS`
+
+---
+
+## 6. Frontend (React)
+
+**Tech**
+
+* React + Vite
+* SWR or simple polling with `setInterval`
+* Minimal Tailwind for styling
+
+**Views**
+
+* **Home/Search**: company input, optional domain
+* **Run View**: progress chips (“Fetching News… / Scanning Patents… / Scoring Risks…”)
+* **Dossier Tabs**: Overview | Patents | Risks | Sources
+
+  * **Evidence Drawer** (modal): excerpt + link
+
+**State**
+
+* Client holds `run_id` and polls `/api/run/{id}` every 2s until `complete|partial|error`.
+
+---
+
+## 7. Caching & Cost Controls
+
+* **Result Cache** (Mongo)
+
+  * Hash key: `sha256(company|date_window|scope)`
+  * If cache hit < `RUN_CACHE_TTL_HOURS`: reuse `sources/patents/insights/risks`
+* Credit accounting:
+
+  * Tally estimated credits per Tavily call; abort if exceeding cap
+* `/extract` gate:
+
+  * Only for URLs where `content_length_estimate` small or snippet lacks claim text
+* “Load More”:
+
+  * UI button triggers another `advanced` page (out of MVP if time tight)
+
+---
+
+## 8. Observability & Logging
+
+* **Structured logging** with `python-json-logger`
+  Fields: `run_id`, `agent`, `latency_ms`, `credits_used`, `tokens_used`, `error_code`
+* **Metrics** (CloudWatch)
+
+  * `runs_started`, `runs_completed`, `runs_partial`, `runs_failed`
+  * `p50_latency`, `p95_latency`
+  * `credits_per_run`, `tokens_per_run`
+* **Tracing**
+
+  * Simple correlation id = `run_id` across services
+* **Audit**
+
+  * Persist raw Tavily response metadata (URLs, titles, timestamps) for reproducibility
+
+---
+
+## 9. Security
+
+* Store secrets in **AWS Secrets Manager**
+* Restrict outbound traffic only to Tavily + LLM provider
+* CORS: allow UI origin
+* Rate limit: `10 req/min/IP` (FastAPI middleware or ALB/WAF)
+* Input sanitation: basic allowlist for company name chars; length caps
+* No storage of user PII beyond company string; all sources are public
+
+---
+
+## 10. Performance Targets
+
+* **P50 end‑to‑end:** ≤ 60s
+* **P95 end‑to‑end:** ≤ 120s
+* **Cold start EB instance:** ≤ 90s (warm at least 1 instance for demo)
+
+**Parallelism**
+
+* Run **News** and **Patents** concurrently
+* I/O bound tasks via `asyncio.gather` and `httpx.AsyncClient`
+
+---
+
+## 11. Deployment Plan (AWS)
+
+* **Elastic Beanstalk (Python)**: single container, rolling updates
+* **MongoDB Atlas**: free/low tier cluster
+* **S3 + CloudFront**: serve React bundle (or EB static)
+* **Logging**: ship app logs to CloudWatch
+* **Alarms**: error rate > 5% over 10 min; p95 latency > 150s
+
+**CI/CD**
+
+* GitHub Actions:
+
+  * `build_backend.yml`: lint, tests, docker build, EB deploy
+  * `build_frontend.yml`: lint, tests, build, upload to S3, invalidate CloudFront
+
+---
+
+## 12. Testing Strategy
+
+**Unit**
+
+* Query builder tests (company name → queries)
+* Normalizers for Tavily responses (news/patent)
+* Cost guardrail tests (mock Tavily counting)
+
+**Integration**
+
+* Mock Tavily endpoints with `respx` for httpx
+* Mock LLM with fixtures returning deterministic JSON
+
+**E2E**
+
+* Spin ephemeral Mongo; run `/api/run` with stubbed upstreams
+* Golden run snapshots for regression
+
+**Acceptance**
+
+* As defined in PRD §14
+
+---
+
+## 13. Runbook (Ops)
+
+**Common Scenarios**
+
+* **COST\_CAP\_EXCEEDED**: API returns partial results; instruct user to “Load More” (post‑MVP).
+* **UPSTREAM\_TIMEOUT**: Retry once; else mark partial and log.
+* **Sparse Companies**: Return “low confidence” badge; allow manual domain input to disambiguate.
+
+**Rollback**
+
+* EB blue/green: keep previous version; swap CNAME on failure.
+
+---
+
+## 14. Risk Register & Mitigations
+
+| Risk                     | Impact            | Mitigation                                                |
+| ------------------------ | ----------------- | --------------------------------------------------------- |
+| Ambiguous company names  | Wrong sources     | Domain disambiguation field; aliases from first news pass |
+| Low patent recall        | Miss moat signals | Expand to WIPO abstracts; allow manual keyword filters    |
+| LLM classification drift | Noisy risks       | Few-shot examples + JSON schema + confidence thresholds   |
+| API quota spikes         | Run fails         | Credit counters + graceful degradation                    |
+| Long upstream latency    | Slow runs         | Parallelization, timeouts, caching                        |
+
+---
+
+## 15. Effort Estimate (MVP)
+
+* Backend + Agents: **4–5 days**
+* Frontend: **2 days**
+* DevOps + CI/CD: **1.5 days**
+* QA & Polishing: **1.5 days**
+* **Total:** \~9–10 working days
+
+---
+
+## 16. Appendix
+
+### 16.1 Example Normalized Types
+
+```python
+@dataclass
+class SourceDoc:
+    id: str
+    run_id: str
+    title: str
+    url: str
+    snippet: str | None
+    published_at: datetime | None
+    domain: str | None
+
+@dataclass
+class PatentDoc:
+    id: str
+    run_id: str
+    title: str
+    assignee: str | None
+    filing_date: date | None
+    grant_date: date | None
+    abstract: str | None
+    cpc: list[str] | None
+    url: str
+```
+
+### 16.2 Example Insight Prompt (condensed)
+
+```
+System: You are an analyst assistant. Summarize company overview, funding events, and partnerships.
+Rules: Use only provided sources. Keep 5–7 bullets total. Add [#id] citations.
+User: { "company":"Acme Bio", "news_items":[...], "patent_items":[...] }
+Return JSON: { "overview":[], "funding_events":[], "partnerships":[], "citations":[] }
+```
+
+### 16.3 Example Risk Prompt (condensed)
+
+```
+System: Classify potential red flags: litigation, regulatory, security/breach, leadership.
+For HIGH severity: require >=2 distinct sources.
+Return JSON: [{category, severity, summary, citations:[ids]}]
+```
+
+### 16.4 Local Dev Setup
+
+```
+# Backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+export MONGODB_URI=... TAVILY_API_KEY=...
+uvicorn app.main:app --reload
+
+# Frontend
+npm i && npm run dev
+```

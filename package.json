@@ -1,0 +1,63 @@
+{
+  "name": "venture-compass-ai",
+  "version": "2.0.0",
+  "description": "AI-powered startup intelligence platform with 6-agent LangGraph orchestration",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "npm install && npm run setup:backend && npm run setup:frontend",
+    "setup:backend": "cd backend && python -m venv .venv && (call .venv\\Scripts\\activate.bat & pip install -r requirements.txt) || (source .venv/bin/activate && pip install -r requirements.txt)",
+    "setup:frontend": "cd frontend && npm install",
+    
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "dev:frontend": "cd frontend && npm run dev",
+    "start": "npm run dev",
+    
+    "build": "npm run build:frontend",
+    "build:frontend": "cd frontend && npm run build",
+    
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "npm run test:db && npm run test:api",
+    "test:frontend": "cd frontend && npm run build",
+    "test:db": "cd backend && python test_db.py",
+    "test:api": "node scripts/test-backend-api.js",
+    
+    "lint": "npm run lint:frontend",
+    "lint:frontend": "cd frontend && npm run lint",
+    
+    "clean": "npm run clean:backend && npm run clean:frontend",
+    "clean:backend": "cd backend && python -c \"import os, shutil; [shutil.rmtree(os.path.join(root, '__pycache__')) for root, dirs, files in os.walk('.') if '__pycache__' in dirs]\"",
+    "clean:frontend": "cd frontend && rm -rf dist node_modules/.vite",
+    
+    "db:test": "cd backend && python test_db.py",
+    "db:reset": "cd backend && python -c \"import asyncio; from app.core.database import init_db, get_database; async def reset(): await init_db(); db = get_database(); collections = await db.list_collection_names(); [await db[c].drop() for c in collections]; print('Database reset complete'); asyncio.run(reset())\"",
+    
+    "status": "node scripts/status.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "workspaces": [
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "python": ">=3.11.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/venture-compass-ai.git"
+  },
+  "keywords": [
+    "ai",
+    "startup-intelligence", 
+    "langraph",
+    "tavily",
+    "fastapi",
+    "react",
+    "mongodb"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}

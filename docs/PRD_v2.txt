@@ -1,0 +1,297 @@
+# VentureCompass AI v2.0 - Product Requirements Document
+
+**Project Type:** Tavily Lead GenAI Engineer Interview Assignment
+**Timeline:** 2 weeks
+**Budget:** $10 OpenAI API limit
+**Demo Requirement:** 3-5 minute video showcasing multi-agent collaboration
+
+---
+
+## 1) Executive Summary
+
+**VentureCompass AI v2.0** is a sophisticated multi-agent system that transforms startup due diligence through intelligent web research and analysis. Built specifically to showcase advanced LangGraph patterns and comprehensive Tavily API utilization, the system coordinates 6 specialized AI agents to deliver investor-grade company intelligence in minutes instead of hours.
+
+**Key Innovation:** Advanced agent collaboration using ALL Tavily API capabilities (Map, Crawl, Extract, Search) with intelligent cross-validation and budget-optimized LLM integration.
+
+---
+
+## 2) Assignment Objectives & Success Criteria
+
+### Primary Assignment Goals
+* **Multi-Agent Architecture:** 6 specialized agents with clear role separation and intelligent coordination
+* **Tavily API Mastery:** Showcase all 4 APIs (Search, Extract, Crawl, Map) in production workflow
+* **LangGraph Excellence:** Advanced patterns including conditional routing, parallel execution, and state management
+* **Production Deployment:** AWS Elastic Beanstalk + MongoDB Atlas + React frontend
+
+### Success Metrics
+* **Functionality:** Seamless agent coordination producing accurate startup intelligence
+* **Creativity:** Unique agent design solving real-world VC pain points
+* **Technical Depth:** Advanced LangGraph patterns and robust error handling
+* **Demo Impact:** Clear 3-5 minute narrative showing agent collaboration
+* **Budget Efficiency:** Stay within $10 OpenAI limit through intelligent caching and optimization
+
+---
+
+## 3) Enhanced Agent Architecture
+
+### Agent 1: Discovery Agent (NEW)
+**Primary Responsibility:** Digital footprint mapping using Tavily Map API
+* Map company website structure and identify key pages
+* Discover social media presence, blogs, and subdomains
+* Create comprehensive digital asset inventory
+* Generate company alias list for downstream agents
+
+**Tavily APIs Used:** Map API (primary), Search API (validation)
+
+### Agent 2: DeepDive Agent (NEW)
+**Primary Responsibility:** Detailed content extraction using Tavily Crawl + Extract APIs
+* Crawl discovered company pages for structured content
+* Extract team member profiles and leadership information
+* Pull product details, pricing, and feature information
+* Gather company timeline, milestones, and achievements
+
+**Tavily APIs Used:** Crawl API, Extract API
+
+### Agent 3: NewsRetriever Agent (ENHANCED)
+**Primary Responsibility:** Strategic company news discovery
+* Multi-query news research (funding, partnerships, product launches)
+* Time-sensitive news analysis with trend detection
+* Funding announcement tracking and analysis
+* Media sentiment analysis and key quote extraction
+
+**Tavily APIs Used:** Search API (topic=news), Extract API (for key articles)
+
+### Agent 4: PatentHunter Agent (ENHANCED)
+**Primary Responsibility:** Intellectual property landscape analysis
+* USPTO and WIPO patent search using verified company names
+* Patent filing timeline and competitive landscape analysis
+* Technology area classification and innovation tracking
+* IP strength assessment and portfolio analysis
+
+**Tavily APIs Used:** Search API (patent-focused), Extract API (patent details)
+
+### Agent 5: Verification Agent (NEW)
+**Primary Responsibility:** Cross-source validation and confidence scoring
+* Cross-reference founder information across multiple sources
+* Validate financial claims and funding announcements
+* Verify company metrics and achievement claims
+* Generate confidence scores and flag inconsistencies
+
+**Tavily APIs Used:** Search API (fact-checking), Extract API (source validation)
+
+### Agent 6: InsightSynthesizer Agent (ENHANCED)
+**Primary Responsibility:** Professional report generation with LLM integration
+* Synthesize multi-agent findings into coherent narrative
+* Generate executive summary with key investment signals
+* Create risk assessment with supporting evidence
+* Produce exportable professional dossier
+
+**LLM Integration:** OpenAI GPT-4o-mini (budget-optimized)
+
+---
+
+## 4) Advanced LangGraph Coordination Patterns
+
+### Multi-Phase Execution Flow
+```
+Phase 1: Discovery
+├── Discovery Agent (Map company digital presence)
+└── Generates: Company aliases, key URLs, digital footprint
+
+Phase 2: Parallel Research (Fan-out)
+├── NewsRetriever (Enhanced with Discovery context)
+├── PatentHunter (Uses verified company names)
+└── DeepDive Agent (Crawls discovered pages)
+
+Phase 3: Verification & Synthesis (Fan-in)
+├── Verification Agent (Cross-validates all findings)
+└── InsightSynthesizer (Creates final report)
+```
+
+### Advanced Coordination Features
+* **Conditional Routing:** Agents adapt workflow based on data quality
+* **State Sharing:** Rich context passed between agents
+* **Error Recovery:** Graceful degradation when APIs fail
+* **Budget Monitoring:** Real-time cost tracking and optimization
+* **Progress Streaming:** Live updates to frontend UI
+
+---
+
+## 5) Budget-Optimized Engineering
+
+### Cost Control Strategy
+* **Intelligent Caching:** 24-hour cache for repeated queries
+* **Selective LLM Usage:** Only for final synthesis, not data processing
+* **Progressive Enhancement:** Free APIs first, LLM polish only when needed
+* **Batch Processing:** Combine multiple small requests
+* **Token Optimization:** Structured prompts with precise output requirements
+
+### Expected Budget Allocation
+* **Discovery Phase:** $0 (Tavily only)
+* **Research Phase:** $1-2 (minimal LLM for query optimization)
+* **Verification Phase:** $1-2 (LLM for confidence scoring)
+* **Synthesis Phase:** $5-6 (GPT-4o-mini for report generation)
+* **Buffer:** $1-2 (error handling and retries)
+
+---
+
+## 6) User Experience & Interface Design
+
+### Modern React Frontend
+* **Real-time Agent Status:** Live visualization of agent progress
+* **Confidence Indicators:** Visual confidence scores for all findings
+* **Source Attribution:** Full traceability to original sources
+* **Interactive Results:** Expandable sections with detailed findings
+* **Export Options:** PDF reports and JSON data export
+
+### Key UI Components
+* **Company Search Interface:** Simple input with auto-suggestions
+* **Agent Progress Dashboard:** Real-time agent status and findings
+* **Confidence Score Visualization:** Color-coded reliability indicators
+* **Source Citation Panel:** Clickable links to all sources
+* **Professional Report View:** Investor-ready formatted output
+
+---
+
+## 7) Technical Architecture
+
+### Backend Stack
+* **Framework:** FastAPI with async support
+* **Agent Orchestration:** LangGraph with custom state management
+* **Database:** MongoDB Atlas with optimized indexes
+* **Deployment:** AWS Elastic Beanstalk with auto-scaling
+* **Monitoring:** Structured logging with agent performance tracking
+
+### Database Schema Enhancements
+```
+companies: {
+  name, domain, aliases[], digital_footprint,
+  discovery_metadata, confidence_scores
+}
+
+sources: {
+  run_id, agent_id, source_type, url, 
+  confidence_score, verification_status
+}
+
+agent_runs: {
+  run_id, agent_name, start_time, end_time,
+  api_calls_made, tokens_used, success_rate
+}
+
+reports: {
+  run_id, executive_summary, risk_assessment,
+  confidence_overall, export_formats[]
+}
+```
+
+### API Design
+* **POST /api/analyze** - Start multi-agent analysis
+* **GET /api/runs/{id}/progress** - Real-time agent progress
+* **GET /api/runs/{id}/results** - Complete analysis results
+* **GET /api/runs/{id}/export/{format}** - Export in various formats
+* **GET /api/agents/status** - System health and performance
+
+---
+
+## 8) Demo Narrative & Showcase Strategy
+
+### 3-5 Minute Demo Script
+
+**"AI Agents Collaborate to Analyze Notion in Real-Time"**
+
+**[0:00-0:30] Opening Hook**
+"Watch 6 AI agents collaborate using Tavily's complete API suite to analyze Notion in under 3 minutes"
+
+**[0:30-1:30] Discovery Phase**
+- Show Discovery Agent mapping Notion's digital presence
+- Highlight Tavily Map API finding key company pages
+- Display real-time agent status and discovered assets
+
+**[1:30-2:30] Parallel Research Phase**
+- Split screen showing 3 agents working simultaneously
+- NewsRetriever finding funding announcements
+- PatentHunter discovering Notion's IP portfolio
+- DeepDive Agent extracting team and product details
+
+**[2:30-3:30] Verification & Synthesis**
+- Verification Agent cross-checking findings
+- Confidence scores appearing for each data point
+- InsightSynthesizer creating final report
+
+**[3:30-4:00] Results & Impact**
+- Professional investor dossier
+- Source attribution and confidence indicators
+- Export options and MongoDB data persistence
+
+### Technical Highlights for Demo
+* **All 4 Tavily APIs** in action with real-time visualization
+* **Advanced LangGraph patterns** with live state management
+* **Budget efficiency** with cost tracking dashboard
+* **Production deployment** on AWS with MongoDB Atlas
+* **Error handling** and graceful degradation examples
+
+---
+
+## 9) Competitive Differentiation
+
+### vs. Simple News Aggregators
+* **Multi-source validation** with confidence scoring
+* **Structured data extraction** vs. raw content scraping
+* **Professional report generation** vs. basic link lists
+
+### vs. Manual Due Diligence
+* **6 agents working in parallel** vs. sequential human research
+* **Cross-source verification** vs. single-source bias
+* **90-second analysis** vs. hours of manual work
+
+### Technical Innovation
+* **Complete Tavily API utilization** showcasing platform capabilities
+* **Budget-optimized LLM integration** with selective usage
+* **Advanced agent coordination** with conditional routing
+* **Production-ready deployment** with monitoring and scaling
+
+---
+
+## 10) Success Validation
+
+### Functional Requirements
+- [ ] All 6 agents coordinate successfully
+- [ ] All 4 Tavily APIs integrated and functional
+- [ ] LangGraph workflows execute without errors
+- [ ] MongoDB data persistence works correctly
+- [ ] React frontend displays real-time progress
+
+### Technical Requirements
+- [ ] Stay within $10 OpenAI budget
+- [ ] Deploy successfully on AWS Elastic Beanstalk
+- [ ] Handle error cases gracefully
+- [ ] Provide full source attribution
+- [ ] Generate professional-quality reports
+
+### Demo Requirements
+- [ ] 3-5 minute video showcasing agent collaboration
+- [ ] Clear narrative showing technical capabilities
+- [ ] MongoDB and logging insights demonstration
+- [ ] Live system demonstration (if applicable)
+- [ ] GitHub repository with comprehensive documentation
+
+---
+
+## 11) Risk Mitigation
+
+### Technical Risks
+* **API Rate Limits:** Implement intelligent backoff and caching
+* **Budget Overrun:** Real-time cost monitoring with hard stops
+* **Agent Coordination Failures:** Robust error handling and fallbacks
+* **Deployment Issues:** Comprehensive testing on AWS staging environment
+
+### Demo Risks
+* **System Downtime:** Local backup demo environment
+* **Network Issues:** Pre-recorded video with live system as backup
+* **Data Quality:** Curated test cases with known good results
+* **Time Overrun:** Structured script with timing markers
+
+---
+
+**Target Outcome:** Demonstrate exceptional technical skills, creative problem-solving, and deep understanding of multi-agent systems to secure the Lead GenAI Engineer position at Tavily.
