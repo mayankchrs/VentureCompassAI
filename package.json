@@ -1,7 +1,7 @@
 {
   "name": "venture-compass-ai",
   "version": "2.0.0",
-  "description": "AI-powered startup intelligence platform with 6-agent LangGraph orchestration",
+  "description": "AI-powered startup intelligence platform with 8-agent LangGraph orchestration",
   "private": true,
   "type": "module",
   "scripts": {

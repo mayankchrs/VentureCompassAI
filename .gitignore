@@ -34,6 +34,7 @@ build/
 venv/
 .venv/
 env/
+.env
 
 # Database
 *.db
@@ -47,3 +48,18 @@ tasks.md
 .claude/
 CLAUDE.md
 learn_from_errors.md
+screenshot/
+
+# Next.js build output
+frontend/.next/
+
+# Frontend runtime cache
+frontend/.turbo/
+
+# Optional: lockfile if not needed (consult your team)
+# frontend/package-lock.json
+# or
+# frontend/yarn.lock
+
+# Optional: frontend testing outputs
+frontend/coverage/

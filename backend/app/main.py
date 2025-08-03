@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import os
 import logging
 from dotenv import load_dotenv
+from datetime import datetime
 
 from app.core.config import settings
 from app.api.v1.api import api_router
@@ -76,3 +77,21 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+@app.get("/test-logging")
+async def test_logging():
+    """Test endpoint to verify logging is working."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info("🔍 Test logging endpoint accessed!")
+    logger.warning("⚠️ This is a warning message")
+    logger.error("❌ This is an error message")
+    
+    print("🖨️ PRINT STATEMENT: Test endpoint accessed!")
+    
+    return {
+        "message": "Logging test completed",
+        "timestamp": datetime.utcnow().isoformat(),
+        "check_console": "You should see logs above this message"
+    }
