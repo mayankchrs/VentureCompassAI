@@ -4,8 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 5173",
-    "build": "NODE_OPTIONS='--max-old-space-size=900' next build",
-    "start": "next start -p 8080",
+    "build": "next build",
+    "start": "next start -p ${PORT:-8080}",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "test-connection": "node test-connection.js",
@@ -13,7 +13,7 @@
     "dev:frontend": "npm run dev",
     "test:frontend": "npm run type-check && npm run lint",
     "clean": "rm -rf .next node_modules/.cache",
-    "eb:build": "NODE_OPTIONS='--max-old-space-size=900' npm run build",
+    "eb:build": "npm run build",
     "eb:start": "npm start"
   },
   "dependencies": {
