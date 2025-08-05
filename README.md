@@ -161,7 +161,7 @@ LOG_LEVEL=INFO
 ### Frontend Environment (`.env`)
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
 ```
 
 ## 🔌 API Endpoints
@@ -351,7 +351,75 @@ This project is a **Lead GenAI Engineer interview assignment for Tavily** with s
 
 ## 🚀 Deployment
 
-### Production Build
+### AWS Elastic Beanstalk Deployment
+
+The backend is configured for AWS Elastic Beanstalk deployment with cost-optimized free tier settings.
+
+#### `.ebextensions` Configuration
+
+The `backend/.ebextensions/` directory contains 3 optimized configuration files:
+
+**`01_python_free_tier.config`**
+- Python-specific optimizations for AWS free tier
+- WSGI path configuration and t2.micro instance settings
+- Single instance deployment (no load balancer)
+- Basic health monitoring and Python optimizations
+
+**`02_environment_demo.config`** 
+- Application environment variables (with placeholders)
+- Cost control settings and performance optimizations
+- ⚠️ **Security**: Contains placeholder values only, set real values via AWS CLI
+
+**`03_memory_optimization.config`**
+- Memory optimizations for t2.micro instances (1GB RAM)
+- Creates 1GB swap file to prevent OOM errors
+- Python memory optimizations and log configurations
+
+#### AWS Deployment Commands
+
+```bash
+# Create deployment package (Unix-compatible paths)
+python create_deployment_zip.py
+
+# Upload to S3
+aws s3 cp venturecompass-complete-app.zip s3://your-bucket/
+
+# Create application version
+aws elasticbeanstalk create-application-version \
+  --application-name venturecompass-backend \
+  --version-label v1.0.0 \
+  --source-bundle S3Bucket=your-bucket,S3Key=venturecompass-complete-app.zip
+
+# Deploy environment
+aws elasticbeanstalk create-environment \
+  --application-name venturecompass-backend \
+  --environment-name venturecompass-prod \
+  --version-label v1.0.0 \
+  --solution-stack-name "64bit Amazon Linux 2023 v4.6.2 running Python 3.13"
+```
+
+#### Setting Environment Variables (Security Best Practice)
+
+```bash
+# Set production environment variables via AWS CLI (secure)
+aws elasticbeanstalk update-environment \
+  --environment-name your-environment-name \
+  --option-settings \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=MONGODB_URI,Value="your-mongodb-atlas-uri" \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=TAVILY_API_KEY,Value="your-tavily-key" \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=LLM_API_KEY,Value="your-openai-key" \
+    Namespace=aws:elasticbeanstalk:application:environment,OptionName=LLM_MODEL,Value="gpt-4o"
+```
+
+#### AWS Free Tier Optimization
+
+- **Instance**: t2.micro (750 hours/month free)
+- **Environment**: SingleInstance (no load balancer costs)  
+- **Health**: Basic monitoring (not enhanced)
+- **Scaling**: Min=1, Max=1 (single instance only)
+- **Estimated Cost**: $0-5/month (within free tier limits)
+
+### Local Production Build
 
 ```bash
 # Build all components
@@ -367,8 +435,8 @@ cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000
 ### Environment Setup
 
 1. **MongoDB Atlas**: Set up cluster and get connection string
-2. **API Keys**: Obtain Tavily and OpenAI API keys
-3. **Environment Variables**: Configure production `.env` files
+2. **API Keys**: Obtain Tavily and OpenAI API keys  
+3. **Environment Variables**: Configure production `.env` files (local) or AWS environment variables (cloud)
 4. **Domain**: Point your domain to the deployment
 
 ## 📄 License

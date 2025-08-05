@@ -52,7 +52,7 @@ app = FastAPI(
     lifespan=lifespan,
     contact={
         "name": "VentureCompass AI",
-        "url": "https://github.com/yourusername/venture-compass-ai",
+        "url": "https://github.com/mayankchrs/VentureCompassAI",
     },
     license_info={
         "name": "MIT",

@@ -4,15 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 5173",
-    "build": "next build",
-    "start": "next start",
+    "build": "NODE_OPTIONS='--max-old-space-size=900' next build",
+    "start": "next start -p 8080",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "test-connection": "node test-connection.js",
     "setup": "npm install && cp .env.example .env.local",
     "dev:frontend": "npm run dev",
     "test:frontend": "npm run type-check && npm run lint",
-    "clean": "rm -rf .next node_modules/.cache"
+    "clean": "rm -rf .next node_modules/.cache",
+    "eb:build": "NODE_OPTIONS='--max-old-space-size=900' npm run build",
+    "eb:start": "npm start"
   },
   "dependencies": {
     "@radix-ui/react-progress": "^1.1.7",

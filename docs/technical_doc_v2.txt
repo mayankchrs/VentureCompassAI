@@ -1,0 +1,589 @@
+# VentureCompass AI — Technical Design Document (TDD) v2.0
+
+**Version:** 2.0 (Production Implementation)
+**Owner:** Engineering (Backend/Agents/DevOps)
+**Stack:** Python (FastAPI, LangGraph), Next.js 15, MongoDB Atlas, AWS Elastic Beanstalk (Dual Instance), Tavily APIs (All 4)
+
+---
+
+## 1. System Overview
+
+VentureCompass AI v2.0 is an advanced multi-agent orchestration platform that generates comprehensive investor-grade company dossiers through sophisticated LangGraph coordination and complete Tavily API integration. The system deploys 8 specialized AI agents across 3 execution phases, delivering cross-validated startup intelligence with full source attribution and confidence scoring.
+
+**Core Architecture**
+* **8-Agent Multi-Phase Workflow:** Discovery → Parallel Research → Validation & Synthesis
+* **Complete Tavily Integration:** Map, Search, Extract, Crawl APIs with intelligent credit management
+* **Advanced State Management:** Sophisticated inter-agent dependencies and conditional routing
+* **Dual AWS Deployment:** Separate Elastic Beanstalk instances for backend and frontend
+* **Enterprise Database:** MongoDB Atlas with optimized schemas and indexing
+
+---
+
+## 2. Advanced Multi-Agent Architecture
+
+### 2.1 LangGraph Orchestration Engine
+
+The system implements a sophisticated 3-phase workflow using LangGraph's StateGraph with conditional routing and parallel execution patterns:
+
+```python
+# Core Orchestrator Structure
+class VentureCompassOrchestrator:
+    def _build_graph(self) -> StateGraph:
+        graph = StateGraph(RunState)
+        
+        # Phase 1: Discovery Foundation
+        graph.add_node("discovery_agent", self.discovery_agent_node)
+        
+        # Phase 2: Parallel Intelligence Gathering  
+        graph.add_node("news_retriever", self.news_retriever_node)
+        graph.add_node("patent_hunter", self.patent_hunter_node)
+        graph.add_node("deepdive_agent", self.deepdive_agent_node)
+        graph.add_node("competitive_agent", self.competitive_agent_node)
+        graph.add_node("founder_agent", self.founder_agent_node)
+        
+        # Phase 3: Validation & Synthesis
+        graph.add_node("verification_agent", self.verification_agent_node)
+        graph.add_node("insight_synthesizer", self.insight_synthesizer_node)
+        
+        # Conditional routing with intelligent workflow adaptation
+        graph.add_conditional_edges(
+            "discovery_agent",
+            self.route_after_discovery,
+            {"parallel_research": "news_retriever", "fallback_search": "news_retriever"}
+        )
+```
+
+### 2.2 Sophisticated State Management System
+
+#### Core State Schema (RunState)
+```python
+@dataclass
+class RunState:
+    # Identity & Context
+    run_id: str
+    company: dict  # {name, domain, aliases}
+    
+    # Phase 1: Discovery Results
+    discovery_results: DiscoveryResults  # URLs, key_pages, social_links
+    company_aliases: List[str]  # Enhanced by multiple agents
+    
+    # Phase 2: Research Results  
+    queries: dict  # {news: [...], patents: [...]}
+    results: dict  # {news: [SourceDoc], patents: [PatentDoc]}
+    deepdive_results: DeepDiveResults  # extracted_content, team_members
+    
+    # Phase 3: Validation & Synthesis
+    verified_facts: List[VerifiedFact]  # Cross-validated data
+    confidence_scores: Dict[str, float]  # Per-category confidence
+    insights: dict  # AI-generated analysis
+    risks: List[RiskItem]  # Risk assessment
+    
+    # System Management
+    cost: dict  # {tavily_credits, llm_tokens, openai_usd}
+    status: str  # pending/running/partial/complete/error
+    current_phase: str  # discovery/research/validation/synthesis
+    errors: List[dict]  # Error tracking and recovery
+```
+
+#### Inter-Agent State Dependencies
+- **NewsRetriever** ← `company_aliases` (Discovery) + `verified_facts` (Verification) + `deepdive_results` (Context)
+- **PatentHunter** ← `company_aliases` + `verified_facts` + `deepdive_results.team_members` (Founders)  
+- **Verification** ← `results['news']` + `results['patents']` + `deepdive_results` (All sources)
+- **InsightSynthesizer** ← Complete state from all 7 previous agents
+
+---
+
+## 3. Detailed Agent Implementation & Tavily API Usage
+
+### 3.1 Discovery Agent (Phase 1 Foundation)
+
+**Core Responsibility:** Digital footprint mapping and company identity resolution
+
+**Implementation Details:**
+```python
+async def discovery_agent_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    company_name = state["company"]["name"]
+    company_domain = state["company"].get("domain")
+    
+    # Generate potential URLs if domain not provided
+    potential_urls = []
+    if company_domain:
+        potential_urls.append(f"https://{clean_domain}")
+    else:
+        clean_name = re.sub(r'[^a-zA-Z0-9]', '', company_name.lower())
+        potential_urls.extend([
+            f"https://{clean_name}.com",
+            f"https://{clean_name}.io", 
+            f"https://www.{clean_name}.com"
+        ])
+    
+    # Tavily Map API Usage
+    for url in potential_urls[:2]:  # Budget-controlled attempts
+        map_response = await tavily_client.map(
+            url=url,
+            max_depth=2,  # Balance depth vs. cost
+            limit=15      # Optimal page discovery limit
+        )
+        
+        # Intelligent page categorization
+        for discovered_url in map_response["results"]:
+            url_path = urlparse(discovered_url).path.lower()
+            if "about" in url_path: key_pages["about"] = discovered_url
+            elif "team" in url_path: key_pages["team"] = discovered_url
+```
+
+**Tavily API Usage:**
+- **Map API:** 1-2 credits per run (domain attempts with max_depth=2, limit=15)
+- **URL Pattern Generation:** Intelligent domain inference when not provided
+- **Page Categorization:** Automatic identification of key company pages (about, team, careers, blog)
+
+**State Outputs:** 
+- `discovery_results` with discovered_urls, company_aliases, key_pages, social_media_links
+- Enhanced `company_aliases` for downstream agent usage
+
+### 3.2 DeepDive Agent (Phase 2 Content Intelligence)
+
+**Core Responsibility:** Advanced content extraction and structured data mining
+
+**Implementation Details:**
+```python
+async def deepdive_agent_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    discovery_results = state.get("discovery_results")
+    
+    # Priority page selection algorithm
+    priority_urls = []
+    key_pages = discovery_results.key_pages
+    
+    # Prioritize high-value pages
+    for page_type in ["about", "team", "careers"]:
+        if page_type in key_pages:
+            priority_urls.append(key_pages[page_type])
+    
+    # Add additional URLs within budget constraints
+    remaining_urls = [url for url in discovery_results.discovered_urls 
+                     if url not in priority_urls]
+    priority_urls.extend(remaining_urls[:3])
+    
+    # Tavily Extract API Usage
+    extract_response = await tavily_client.extract(
+        urls=priority_urls,
+        depth="advanced"  # Maximum content quality
+    )
+    
+    # Team member extraction with pattern recognition
+    for result in extract_response["results"]:
+        content = result.get("raw_content", "")
+        if "team" in result.get("url", "").lower():
+            team_info = self._extract_team_info(content)
+            team_members.extend(team_info)
+```
+
+**Tavily API Usage:**
+- **Extract API:** Single advanced extraction call (1 credit) covering up to 6 priority URLs
+- **Content Processing:** Limits content to 2000 characters per page for memory efficiency
+- **Team Detection:** Pattern matching for common executive titles (CEO, CTO, CFO, etc.)
+
+**State Outputs:**
+- `deepdive_results` with extracted_content, team_members, company_timeline, product_info
+- Enhanced company context for downstream agents
+
+### 3.3 NewsRetriever Agent (Phase 2 News Intelligence)
+
+**Core Responsibility:** Contextual news intelligence with multi-source enhancement
+
+**Implementation Details:**
+```python
+async def news_retriever_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    # Multi-identity company name resolution
+    company_names = []
+    if state.get("company_aliases"):
+        company_names.extend(state["company_aliases"])
+    
+    # Enhanced query generation with Discovery context
+    queries = []
+    for name in company_names[:2]:  # Budget-controlled iteration
+        queries.extend([
+            f"{name} news funding investment",
+            f"{name} partnership collaboration deal", 
+            f"{name} product launch new feature"
+        ])
+    
+    # Domain-specific queries from Discovery results
+    discovery_results = state.get("discovery_results")
+    if discovery_results and discovery_results.discovered_urls:
+        domain = urlparse(discovery_results.discovered_urls[0]).netloc.replace("www.", "")
+        queries.append(f"site:{domain} OR \"{primary_name}\" news funding")
+    
+    # Industry-adaptive queries from DeepDive analysis
+    deepdive_results = state.get("deepdive_results")
+    if deepdive_results:
+        content_sample = " ".join(list(deepdive_results.extracted_content.values())[:2])
+        if any(tech_word in content_sample.lower() for tech_word in ["ai", "software", "tech"]):
+            queries.append(f"\"{primary_name}\" technology startup funding")
+```
+
+**Tavily API Usage:**
+- **Search API:** topic="news", depth="basic", time_range="month", max_results=5
+- **Credit Management:** Uses 1/3 of total credit budget with intelligent query prioritization
+- **Enhanced Context:** Leverages Discovery domain info and DeepDive industry analysis
+
+**State Dependencies:** 
+- `company_aliases` from Discovery Agent
+- `verified_facts` from Verification Agent (high-confidence company names)
+- `deepdive_results` for industry-specific query generation
+
+### 3.4 PatentHunter Agent (Phase 2 IP Intelligence)
+
+**Core Responsibility:** Comprehensive intellectual property analysis with multi-strategy search
+
+**Implementation Details:**
+```python
+async def patent_hunter_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    # Collect verified company identities
+    company_names = [state["company"]["name"]]
+    if state.get("company_aliases"):
+        company_names.extend(state["company_aliases"])
+    
+    # Extract founder information from DeepDive results
+    founders = []
+    deepdive_results = state.get("deepdive_results")
+    if deepdive_results and deepdive_results.team_members:
+        for member in deepdive_results.team_members:
+            if any(title in member.get("role", "").lower() for title in ["founder", "ceo", "cto"]):
+                founders.append(member.get("name", ""))
+    
+    # Multi-strategy query generation
+    queries = []
+    
+    # Core patent searches
+    for name in company_names[:3]:
+        queries.extend([
+            f'"{name}" patent application OR grant site:uspto.gov',
+            f'"{name}" assignee patent OR "patent application"',
+            f'"{name}" WIPO PCT abstract site:wipo.int'
+        ])
+    
+    # Founder-based searches
+    for founder in founders[:2]:
+        queries.extend([
+            f'"{founder}" inventor patent "{company_names[0]}"',
+            f'"{founder}" assignee patent application'
+        ])
+    
+    # Technology-specific searches based on content analysis
+    if deepdive_results:
+        content_sample = " ".join(list(deepdive_results.extracted_content.values())[:3])
+        if "artificial intelligence" in content_sample.lower():
+            queries.append(f'"{company_names[0]}" "artificial intelligence" patent')
+```
+
+**Tavily API Usage:**
+- **Search API:** topic="general", depth="basic", time_range="year", max_results=10
+- **Multi-Database Coverage:** USPTO, WIPO, and general patent databases
+- **Founder Integration:** Uses team member data for inventor-based patent searches
+
+**State Dependencies:**
+- `company_aliases` for comprehensive company name coverage
+- `verified_facts` for high-confidence company identities (>0.8 confidence)
+- `deepdive_results.team_members` for founder-based patent discovery
+
+### 3.5 Competitive Agent (Phase 2 Market Intelligence)
+
+**Core Responsibility:** Market landscape analysis and competitive positioning
+
+**Implementation Strategy:**
+- **Competitor Identification:** Uses industry context from DeepDive content analysis
+- **Market Positioning:** Analyzes competitive landscape using verified company information
+- **Strategic Intelligence:** Searches for competitor funding, partnerships, and moves
+- **Threat Assessment:** Identifies competitive risks and market opportunities
+
+### 3.6 Founder Agent (Phase 2 Leadership Intelligence)
+
+**Core Responsibility:** Leadership background analysis and founder credibility assessment
+
+**Implementation Strategy:**
+- **Founder Extraction:** Uses team member data from DeepDive Agent
+- **Background Research:** Searches for founder experience, education, track record
+- **Leadership Assessment:** Analyzes founder public statements and thought leadership
+- **Network Analysis:** Identifies founder connections and previous ventures
+
+### 3.7 Verification Agent (Phase 3 Cross-Validation)
+
+**Core Responsibility:** Cross-source validation and confidence scoring system
+
+**Implementation Details:**
+```python
+async def verification_agent_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    # Cross-validate information from all research agents
+    news_sources = state["results"].get("news", [])
+    patent_docs = state["results"].get("patents", [])
+    deepdive_results = state.get("deepdive_results")
+    
+    # Generate confidence scores for different data types
+    confidence_scores = {}
+    confidence_scores["news_reliability"] = min(1.0, len(news_sources) / 10)
+    confidence_scores["patent_coverage"] = min(1.0, len(patent_docs) / 5) 
+    confidence_scores["website_analysis"] = 1.0 if deepdive_content else 0.0
+    
+    # Create verified facts with confidence assessment
+    verified_facts = []
+    for source in news_sources[:3]:  # Top sources only
+        verified_fact = VerifiedFact(
+            fact_id=f"news_{source.id}",
+            claim=source.title,
+            sources=[source.url],
+            confidence_score=0.8,  # News gets high confidence
+            verification_method="news_source_validation"
+        )
+        verified_facts.append(verified_fact)
+```
+
+**Validation Methods:**
+- **Cross-Source Correlation:** Increases confidence with multiple source confirmation
+- **Source Authority Assessment:** Weights patent data (0.9) higher than news (0.8)
+- **Inconsistency Detection:** Flags conflicting information across data sources
+
+### 3.8 InsightSynthesizer Agent (Phase 3 AI Synthesis)
+
+**Core Responsibility:** Budget-aware AI synthesis and professional report generation
+
+**Implementation Details:**
+```python
+async def insight_synthesizer_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    # Aggregate findings from all 7 previous agents
+    company_data = {
+        "company": state["company"],
+        "discovery_results": state.get("discovery_results"),
+        "news_results": state["results"].get("news", []),
+        "patent_results": state["results"].get("patents", []),
+        "deepdive_results": state.get("deepdive_results"),
+        "verified_facts": state.get("verified_facts", [])
+    }
+    
+    # Budget-aware LLM integration
+    budget_status = await budget_tracker.get_budget_status()
+    
+    if budget_status['remaining_budget'] > 2.0:  # Sufficient budget for LLM
+        synthesis_result = await llm_service.generate_insights(company_data)
+        llm_enhanced = True
+    else:
+        # Intelligent fallback with rule-based synthesis
+        synthesis_result = self._rule_based_synthesis(company_data)
+        llm_enhanced = False
+```
+
+**LLM Integration Strategy:**
+- **Budget Monitoring:** Real-time cost tracking with automatic cutoffs
+- **Selective Usage:** LLM only for final synthesis, never for data processing
+- **Fallback Pattern:** Rule-based synthesis when budget constraints exist
+- **Structured Output:** Uses precise schemas for consistent, cost-effective results
+
+---
+
+## 4. Advanced Technical Implementation
+
+### 4.1 Tavily Client with Intelligent Rate Limiting
+
+```python
+class TavilyClient:
+    def __init__(self, api_key: str):
+        self.session = httpx.AsyncClient(
+            base_url="https://api.tavily.com",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30.0
+        )
+        # Intelligent rate limiting
+        self._request_count = 0
+        self._reset_time = time.time() + 60
+        self._max_requests_per_minute = 30
+    
+    async def _rate_limit_check(self):
+        current_time = time.time()
+        if current_time >= self._reset_time:
+            self._request_count = 0
+            self._reset_time = current_time + 60
+        
+        if self._request_count >= self._max_requests_per_minute:
+            sleep_time = self._reset_time - current_time
+            await asyncio.sleep(sleep_time + 1)
+    
+    async def map(self, url: str, max_depth: int = 2, limit: int = 15):
+        await self._rate_limit_check()
+        # Implementation with error handling and retry logic
+    
+    async def search(self, query: str, topic: str = "general", depth: str = "basic"):
+        await self._rate_limit_check()
+        # Implementation with caching and deduplication
+    
+    async def extract(self, urls: List[str], depth: str = "basic"):
+        await self._rate_limit_check()
+        # Implementation with content processing and filtering
+```
+
+### 4.2 Database Schema & Indexing Strategy
+
+**MongoDB Collections with Optimized Indexes:**
+
+```javascript
+// Companies collection
+db.companies.createIndex({ "name": "text", "aliases": "text" })
+db.companies.createIndex({ "domain": 1 })
+
+// Runs collection  
+db.runs.createIndex({ "company_id": 1, "started_at": -1 })
+db.runs.createIndex({ "status": 1, "started_at": -1 })
+
+// Sources collection
+db.sources.createIndex({ "run_id": 1, "type": 1 })
+db.sources.createIndex({ "domain": 1, "confidence_score": -1 })
+
+// Patents collection
+db.patents.createIndex({ "run_id": 1, "assignee": 1 })
+db.patents.createIndex({ "filing_date": -1, "assignee": 1 })
+
+// Insights collection
+db.insights.createIndex({ "run_id": 1 })
+db.insights.createIndex({ "confidence_score": -1, "created_at": -1 })
+```
+
+### 4.3 AWS Deployment Architecture
+
+**Dual Elastic Beanstalk Configuration:**
+
+**Backend Instance:**
+```yaml
+# backend/.ebextensions/python.config
+option_settings:
+  aws:elasticbeanstalk:container:python:
+    WSGIPath: application.py
+  aws:elasticbeanstalk:application:environment:
+    PYTHONPATH: "/opt/python/current/app:$PYTHONPATH"
+    MONGODB_URI: !Ref MongoDBConnectionString
+    TAVILY_API_KEY: !Ref TavilyAPIKey
+```
+
+**Frontend Instance:**
+```yaml  
+# frontend/.ebextensions/nodejs.config
+option_settings:
+  aws:elasticbeanstalk:container:nodejs:
+    NodeCommand: "npm start"
+    NodeVersion: "18.17.0"
+  aws:elasticbeanstalk:application:environment:
+    NEXT_PUBLIC_API_BASE_URL: !Ref BackendURL
+```
+
+---
+
+## 5. Performance Optimization & Monitoring
+
+### 5.1 Cost Management Strategy
+
+**Tavily Credit Allocation:**
+- Discovery Phase: 1-2 credits (Map API)
+- Research Phase: 8-12 credits (Search APIs across 5 agents)  
+- DeepDive Phase: 1 credit (Extract API)
+- Total Budget: 10-15 credits per complete analysis
+
+**LLM Cost Controls:**
+- Budget monitoring with real-time tracking
+- Automatic cutoffs at 80% budget utilization
+- Intelligent fallback to rule-based synthesis
+- Token optimization with structured prompts
+
+### 5.2 Performance Targets
+
+- **End-to-End Analysis:** < 2 minutes (P95)
+- **Agent Coordination:** < 30 seconds overhead
+- **Database Operations:** < 500ms per query
+- **API Response Times:** < 2 seconds per endpoint
+
+### 5.3 Monitoring & Observability
+
+**Structured Logging:**
+```python
+logger.info(f"Agent completed", extra={
+    "run_id": run_id,
+    "agent": "news_retriever", 
+    "duration_ms": duration,
+    "credits_used": credits,
+    "sources_found": len(sources),
+    "errors": error_count
+})
+```
+
+**CloudWatch Metrics:**
+- Agent success rates and latencies
+- Credit utilization by agent and phase
+- Error rates with categorization
+- Database performance metrics
+
+---
+
+## 6. API Contract & Integration
+
+### 6.1 Core API Endpoints
+
+**POST /api/run** - Initiate Analysis
+```json
+Request: { "company": "Stripe", "domain": "stripe.com" }
+Response: { "run_id": "r_abc123", "status": "running" }
+```
+
+**GET /api/run/{run_id}** - Poll Status
+```json
+Response: {
+  "run_id": "r_abc123",
+  "status": "running",
+  "current_phase": "research", 
+  "progress": {
+    "discovery_agent": "completed",
+    "news_retriever": "running",
+    "patent_hunter": "running",
+    "deepdive_agent": "pending"
+  },
+  "cost": {
+    "tavily_credits": 5,
+    "openai_usd": 0.12
+  }
+}
+```
+
+**GET /api/run/{run_id}/results** - Complete Results
+```json
+Response: {
+  "insights": {
+    "executive_summary": "...",
+    "investment_signals": [...],
+    "confidence_score": 0.87,
+    "llm_enhanced": true
+  },
+  "sources": [...],
+  "patents": [...],
+  "verification": {
+    "verified_facts": [...],
+    "confidence_scores": {...}
+  }
+}
+```
+
+---
+
+## 7. Security & Compliance
+
+### 7.1 Security Implementation
+- **API Key Management:** AWS Secrets Manager integration
+- **Network Security:** VPC isolation with security groups  
+- **Data Encryption:** TLS 1.3 for all communications
+- **Input Validation:** Comprehensive sanitization and rate limiting
+- **Audit Logging:** Complete request/response logging for compliance
+
+### 7.2 Error Handling & Recovery
+- **Graceful Degradation:** Partial results when individual agents fail
+- **Retry Logic:** Exponential backoff with intelligent failure handling
+- **State Recovery:** MongoDB persistence enables resumable analysis
+- **Budget Protection:** Hard stops prevent cost overruns
+
+---
+
+This technical design document reflects the actual production implementation of VentureCompass AI v2.0, showcasing sophisticated multi-agent coordination, complete Tavily API integration, and enterprise-grade deployment architecture.
