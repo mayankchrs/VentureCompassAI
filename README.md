@@ -17,20 +17,9 @@ VentureCompass AI is a sophisticated investment intelligence platform that gener
 
 ### 8-Agent Multi-Phase System
 
-```mermaid
-graph TD
-    A[Discovery Agent] --> B[News Agent]
-    A --> C[Patent Agent]
-    A --> D[Founder Agent]
-    A --> E[Competitive Agent]
-    A --> F[DeepDive Agent]
-    B --> G[Verification Agent]
-    C --> G
-    D --> G
-    E --> G
-    F --> G
-    G --> H[Synthesis Agent]
-```
+![8-Agent Architecture Diagram](8-agent-diagram.png)
+
+**Visual Architecture**: The diagram above shows the complete 8-agent coordination flow from discovery through synthesis.
 
 **Phase 1: Discovery**
 - **Discovery Agent**: Maps company digital presence using Tavily Map API
@@ -451,7 +440,6 @@ This is an interview assignment, but the codebase demonstrates:
 - **Type Safety**: Comprehensive TypeScript usage
 - **Error Handling**: Graceful degradation and retry logic
 - **Documentation**: Comprehensive code and API documentation
-- **Testing**: Unit and integration test examples
 
 ---
 
