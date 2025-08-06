@@ -321,22 +321,8 @@ npm install
 
 ## 📚 Documentation
 
-- **🏗 Architecture**: See `docs/technical_doc.txt` for detailed implementation
+- **🏗 Architecture**: See `docs/technical_doc_v2.txt` for detailed implementation
 - **📋 Requirements**: See `docs/PRD_v2.txt` for v2.0 specifications
-- **🔧 Frontend Setup**: See `FRONTEND_DOCUMENTATION.md`
-- **🤖 AI Development**: See `CLAUDE.md` for AI-specific guidelines
-- **📖 Error Learning**: See `learn_from_errors.md` for debugging insights
-
-## 🎯 Assignment Context
-
-This project is a **Lead GenAI Engineer interview assignment for Tavily** with specific constraints:
-
-- **⏰ Timeline**: 2 weeks for complete delivery
-- **💰 Budget**: $10 OpenAI API limit (hard constraint)
-- **🎬 Demo**: 3-5 minute video showcasing multi-agent collaboration
-- **🎯 Goal**: Showcase ALL 4 Tavily APIs + advanced LangGraph patterns
-
-**Success Criteria**: Technical excellence (40%) + Creativity (25%) + Code quality (20%) + Demo (15%)
 
 ## 🚀 Deployment
 
